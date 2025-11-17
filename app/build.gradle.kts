@@ -27,7 +27,7 @@ android {
 
     buildTypes {
         debug {
-            buildConfigField("String", "SERVER_URL", "\"$devServerUrl\"")
+            buildConfigField("String", "SERVER_URL", "\"$prodServerUrl\"")
         }
         release {
             buildConfigField("String", "SERVER_URL", "\"$prodServerUrl\"")

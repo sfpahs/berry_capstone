@@ -396,6 +396,10 @@ public class MainActivity extends AppCompatActivity {
                     appState = AppState.LISTENING_DESTINATION;
                     logState("STATE → LISTENING_DESTINATION");
                     speakAndShow("어디로 안내해드릴까요?");
+                } else {
+                    logState("MENU 상태에서 명령 미인식, 재청취");
+                    speakAndShow("길안내를 시작하려면 '길안내'라고 말씀해주세요.");
+                    safeRestartListeningWithDelay(600);
                 }
                 break;
 
@@ -458,6 +462,8 @@ public class MainActivity extends AppCompatActivity {
         call.enqueue(new Callback<DestinationResponse>() {
             @Override
             public void onResponse(Call<DestinationResponse> call, Response<DestinationResponse> res) {
+                logState("requestDestination() 응답 code=" + res.code());
+
                 if (!res.isSuccessful() || res.body() == null || res.body().getTuned() == null) {
                     logState("requestDestination() → 후보 없음 / 응답 오류");
                     tvNavigation.setText("후보 없음, 다시 말씀해주세요.");
@@ -469,6 +475,8 @@ public class MainActivity extends AppCompatActivity {
                 tempDestinationName = res.body().getTuned().getName();
                 tempDestLat = res.body().getTuned().getLat();
                 tempDestLon = res.body().getTuned().getLon();
+                logState("requestDestination() 성공 name=" + tempDestinationName
+                        + " lat=" + tempDestLat + " lon=" + tempDestLon);
 
                 appState = AppState.CONFIRMING_DESTINATION;
                 logState("STATE → CONFIRMING_DESTINATION 후보=" + tempDestinationName);
@@ -609,6 +617,8 @@ public class MainActivity extends AppCompatActivity {
         call.enqueue(new Callback<PhotoLocationResponse>() {
             @Override
             public void onResponse(Call<PhotoLocationResponse> call, Response<PhotoLocationResponse> response) {
+                logState("requestPhotoLocation() 응답 code=" + response.code());
+
                 if (!response.isSuccessful() || response.body() == null) {
                     logState("requestPhotoLocation() → 응답 없음");
                     handlePhotoLocationNetworkError(null);
@@ -616,6 +626,11 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 PhotoLocationResponse body = response.body();
+                logState("requestPhotoLocation() body status=" + body.getStatus()
+                        + ", matchedName=" + body.getMatchedName()
+                        + ", address=" + body.getAddress()
+                        + ", bestAngle=" + body.getBestAngleDeg());
+
                 if (body.getStatus() == null || !"success".equalsIgnoreCase(body.getStatus())) {
                     if (wasNavigatingBeforeLocation) {
                         // 길안내 중이었으면 경로 계속
