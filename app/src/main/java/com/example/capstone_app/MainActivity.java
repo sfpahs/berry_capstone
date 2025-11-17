@@ -519,31 +519,60 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    private void resetTempDestination() {
+        tempDestinationName = "";
+        tempDestLat = 0.0;
+        tempDestLon = 0.0;
+    }
     private void evaluateConfirmation(String text) {
         confirmTryCount++;
         logState("evaluateConfirmation(" + text + ") try=" + confirmTryCount);
 
-        if (isYes(text)) { confirmDestination(); return; }
+        if (isYes(text)) {
+            // 임시 후보 유효성 검증
+            if (tempDestinationName == null || tempDestinationName.isEmpty()) {
+                resetTempDestination();
+                appState = AppState.LISTENING_DESTINATION;
+                speakAndShow("후보가 없습니다. 목적지를 다시 말씀해 주세요.");
+                safeRestartListeningWithDelay(300);
+                return;
+            }
+            confirmDestination();
+            return;
+        }
 
         if (isNo(text)) {
-            if (confirmTryCount >= MAX_CONFIRM_TRY) {
-                appState = AppState.LISTENING_DESTINATION;
-                speakAndShow("다시 목적지를 말씀해주세요.");
-            } else {
-                speakAndShow("다른 장소인가요? 다시 말씀해주세요.");
-            }
+            // 핵심: 이전 후보 제거 + 상태 전환 + 즉시 재청취
+            resetTempDestination();
+            appState = AppState.LISTENING_DESTINATION;
+            speakAndShow("새 목적지를 말씀해 주세요.");
+            safeRestartListeningWithDelay(300);
             return;
         }
 
         if (confirmTryCount >= MAX_CONFIRM_TRY) {
+            resetTempDestination();
             appState = AppState.LISTENING_DESTINATION;
-            speakAndShow("인식이 어렵습니다. 목적지를 다시 말해주세요");
+            speakAndShow("인식이 어렵습니다. 목적지를 다시 말해주세요.");
+            safeRestartListeningWithDelay(300);
         } else {
             speakAndShow("예 또는 아니오로 말씀해주세요.");
+            safeRestartListeningWithDelay(300);
         }
     }
-
     private void confirmDestination() {
+        if (appState != AppState.CONFIRMING_DESTINATION) {
+            logState("confirmDestination() ignored: state=" + appState);
+            return;
+        }
+        if (tempDestinationName == null || tempDestinationName.isEmpty()) {
+            resetTempDestination();
+            appState = AppState.LISTENING_DESTINATION;
+            speakAndShow("후보가 없습니다. 목적지를 다시 말씀해 주세요.");
+            safeRestartListeningWithDelay(300);
+            return;
+        }
+
         currentDestinationName = tempDestinationName;
         currentDestLat = tempDestLat;
         currentDestLon = tempDestLon;
@@ -558,7 +587,6 @@ public class MainActivity extends AppCompatActivity {
         speakAndShow(currentDestinationName + "으로 이동을 시작합니다.");
         connectWebSocket();
     }
-
     private void connectWebSocket() {
         String wsUrl = BuildConfig.SERVER_URL
                 .replace("http://","ws://")
