@@ -38,6 +38,8 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "MainActivity";
     private static final String DEVICE_KEY = "JETSON-001";
+    private static final float RMS_LOG_THRESHOLD = 2.0f;
+    private static final long RMS_LOG_INTERVAL_MS = 700L;
 
     // GPS 동적 변수
     private double currentLat = 0.0;
@@ -66,6 +68,7 @@ public class MainActivity extends AppCompatActivity {
 
     private String lastSpokenMessage = "";
     private long lastTtsTimeMillis = 0L;
+    private long lastMicLogTimeMillis = 0L;
 
     private final Handler sttHandler = new Handler(Looper.getMainLooper());
     private final Handler navigationHandler = new Handler(Looper.getMainLooper());
@@ -306,11 +309,30 @@ public class MainActivity extends AppCompatActivity {
     // ================================
     private RecognitionListener buildRecognitionListener() {
         return new RecognitionListener() {
-            @Override public void onReadyForSpeech(Bundle params) { tvNavigation.setText("🎙️ 듣는 중..."); }
-            @Override public void onBeginningOfSpeech() {}
-            @Override public void onRmsChanged(float rmsdB) {}
+            @Override
+            public void onReadyForSpeech(Bundle params) {
+                tvNavigation.setText("🎙️ 듣는 중...");
+                logState("onReadyForSpeech");
+            }
+
+            @Override
+            public void onBeginningOfSpeech() {
+                logState("onBeginningOfSpeech");
+            }
+
+            @Override
+            public void onRmsChanged(float rmsdB) {
+                if (rmsdB > RMS_LOG_THRESHOLD) {
+                    long now = System.currentTimeMillis();
+                    if (now - lastMicLogTimeMillis > RMS_LOG_INTERVAL_MS) {
+                        lastMicLogTimeMillis = now;
+                        Log.d(TAG, "[MIC] RMS=" + rmsdB);
+                    }
+                }
+            }
+
             @Override public void onBufferReceived(byte[] buffer) {}
-            @Override public void onEndOfSpeech() {}
+            @Override public void onEndOfSpeech() { logState("onEndOfSpeech"); }
 
             @Override
             public void onError(int error) {
