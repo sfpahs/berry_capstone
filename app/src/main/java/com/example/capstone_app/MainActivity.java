@@ -16,9 +16,21 @@ import android.util.Log;
 import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.IntentSenderRequest;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+
+import com.google.android.gms.common.api.ResolvableApiException;
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationCallback;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationResult;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.LocationSettingsRequest;
+import com.google.android.gms.location.Priority;
+import com.google.android.gms.location.SettingsClient;
 
 import java.util.ArrayList;
 import java.util.Locale;
@@ -76,9 +88,15 @@ public class MainActivity extends AppCompatActivity {
     private MediaPlayer beepPlayer;
     private boolean isActivityVisible = false;
 
-    // 🔹 내 위치 관련 플래그 추가
-    private boolean isLocationSession = false;           // 내 위치 질의 진행 중인지
-    private boolean wasNavigatingBeforeLocation = false; // 내 위치 호출 직전에 NAVIGATING 이었는지
+    // 🔹 내 위치 관련 플래그
+    private boolean isLocationSession = false;
+    private boolean wasNavigatingBeforeLocation = false;
+
+    // 🔹 위치 관련 (추가)
+    private FusedLocationProviderClient fused;
+    private LocationCallback locationCallback;
+    private LocationRequest locationRequest;
+    private static final long LOCATION_INTERVAL_MS = 3000L; // 3초
 
     enum AppState {
         MENU,
@@ -87,15 +105,19 @@ public class MainActivity extends AppCompatActivity {
         NAVIGATING
     }
 
+    // 기존 오디오 권한 런처는 유지
     private final ActivityResultLauncher<String> permissionLauncher =
             registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
                 if (granted) initializeTTS();
                 else initializeTTSWithoutSTT();
             });
 
-    // ================================
-    // onCreate
-    // ================================
+    // 위치 설정 요청 런처(기기 위치 설정이 꺼져 있을 때 유도)
+    private final ActivityResultLauncher<IntentSenderRequest> locationSettingsLauncher =
+            registerForActivityResult(new ActivityResultContracts.StartIntentSenderForResult(), result -> {
+                startLocationTracking(); // 설정 후 재시도
+            });
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -126,22 +148,106 @@ public class MainActivity extends AppCompatActivity {
         apiService = retrofit.create(ApiService.class);
 
         requestMicPermission();
-        startLocationTracking();
+        startLocationTracking(); // 실제 위치 측정으로 변경됨
     }
 
-
     // ================================
-    // 위치 수신
+    // 위치 수신 (실제 GPS, 3초마다)
     // ================================
     private void startLocationTracking() {
-        // 실제 GPS 코드와 연결 필요
-        // 현재 테스트 단계에서는 GPS 업데이트 시 아래처럼 갱신
-        currentLat = 35.250058;
-        currentLon = 128.902743;
+        if (!hasLocationPermission()) {
+            // 위치 권한이 없다면 요청 (필요 시 COARSE도 함께)
+            requestLocationPermission();
+            return;
+        }
 
-        tvCoordinates.setText(String.format(Locale.KOREA,
-                "현재 위치: %.6f, %.6f", currentLat, currentLon));
+        if (fused == null) {
+            fused = LocationServices.getFusedLocationProviderClient(this);
+        }
+
+        // 최신 Builder API 사용: 우선순위 + 간격 지정
+        locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, LOCATION_INTERVAL_MS)
+                .setMinUpdateIntervalMillis(LOCATION_INTERVAL_MS)   // 3초 최소 간격 요청
+                .setMaxUpdateDelayMillis(LOCATION_INTERVAL_MS)      // 배치 지연 최소화
+                .build(); // 기기/OS에 따라 정확히 3초는 보장되지 않을 수 있음 [전력 최적화]
+
+        // 기기 위치 설정 확인 (GPS/네트워크 위치가 꺼져있을 수 있음)
+        LocationSettingsRequest settingsRequest = new LocationSettingsRequest.Builder()
+                .addLocationRequest(locationRequest)
+                .build();
+        SettingsClient settingsClient = LocationServices.getSettingsClient(this);
+        settingsClient.checkLocationSettings(settingsRequest)
+                .addOnSuccessListener(ignored -> {
+                    // 콜백 준비
+                    if (locationCallback == null) {
+                        locationCallback = new LocationCallback() {
+                            @Override
+                            public void onLocationResult(LocationResult result) {
+                                Location loc = result.getLastLocation();
+                                if (loc != null) {
+                                    currentLat = loc.getLatitude();
+                                    currentLon = loc.getLongitude();
+                                    tvCoordinates.setText(String.format(
+                                            Locale.KOREA, "현재 위치: %.6f, %.6f", currentLat, currentLon));
+                                }
+                            }
+                        };
+                    }
+                    // 업데이트 시작
+                    if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                        // TODO: Consider calling
+                        //    ActivityCompat#requestPermissions
+                        // here to request the missing permissions, and then overriding
+                        //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                        //                                          int[] grantResults)
+                        // to handle the case where the user grants the permission. See the documentation
+                        // for ActivityCompat#requestPermissions for more details.
+                        return;
+                    }
+                    fused.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper());
+                })
+                .addOnFailureListener(e -> {
+                    if (e instanceof ResolvableApiException) {
+                        try {
+                            IntentSenderRequest req =
+                                    new IntentSenderRequest.Builder(((ResolvableApiException) e).getResolution()).build();
+                            locationSettingsLauncher.launch(req);
+                        } catch (Exception ex) {
+                            Log.e(TAG, "Location settings resolution failed", ex);
+                        }
+                    } else {
+                        Log.e(TAG, "Location settings check failed", e);
+                    }
+                });
     }
+
+    private boolean hasLocationPermission() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                || ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void requestLocationPermission() {
+        // 필요 시 복수 권한 런처로 대체 가능
+        requestPermissions(new String[] {
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+        }, 1001);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] perms, int[] results) {
+        super.onRequestPermissionsResult(requestCode, perms, results);
+        if (requestCode == 1001) {
+            if (hasLocationPermission()) {
+                startLocationTracking();
+            } else {
+                tvCoordinates.setText("현재 위치: 권한 필요");
+            }
+        }
+    }
+    // ================================
+    // 나머지 기존 로직 (변경 없음)
+    // ================================
 
     private void requestMicPermission() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
@@ -161,20 +267,9 @@ public class MainActivity extends AppCompatActivity {
             if (result == TextToSpeech.SUCCESS) {
                 mTTS.setLanguage(Locale.KOREAN);
                 mTTS.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-                    @Override
-                    public void onStart(String id) {
-                        stopListening();
-                    }
-
-                    @Override
-                    public void onDone(String id) {
-                        runOnUiThread(() -> startBeepThenTimedListening(4000));
-                    }
-
-                    @Override
-                    public void onError(String id) {
-                        runOnUiThread(() -> startBeepThenTimedListening(4000));
-                    }
+                    @Override public void onStart(String id) { stopListening(); }
+                    @Override public void onDone(String id) { runOnUiThread(() -> startBeepThenTimedListening(4000)); }
+                    @Override public void onError(String id) { runOnUiThread(() -> startBeepThenTimedListening(4000)); }
                 });
 
                 initializeSTT();
@@ -190,9 +285,6 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    // ================================
-    // STT 설정
-    // ================================
     private void initializeSTT() {
         resetSpeechRecognizer();
     }
@@ -200,15 +292,9 @@ public class MainActivity extends AppCompatActivity {
     private void resetSpeechRecognizer() {
         runOnUiThread(() -> {
             isListening = false;
-
             if (speechRecognizer != null) {
-                try {
-                    speechRecognizer.destroy();
-                } catch (Exception e) {
-                    Log.e(TAG, "speechRecognizer.destroy() 오류", e);
-                }
+                try { speechRecognizer.destroy(); } catch (Exception e) { Log.e(TAG, "speechRecognizer.destroy() 오류", e); }
             }
-
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
             speechRecognizer.setRecognitionListener(buildRecognitionListener());
         });
@@ -220,8 +306,7 @@ public class MainActivity extends AppCompatActivity {
 
             isListening = true;
             logState("startListening()");
-            android.content.Intent intent =
-                    new android.content.Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            android.content.Intent intent = new android.content.Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ko-KR");
 
             try {
@@ -241,25 +326,12 @@ public class MainActivity extends AppCompatActivity {
 
     private void stopListening() {
         runOnUiThread(() -> {
-            if (speechRecognizer == null) {
-                isListening = false;
-                return;
-            }
-
-            try {
-                speechRecognizer.stopListening();
-            } catch (Exception e) {
-                Log.e(TAG, "stopListening() error", e);
-            } finally {
-                logState("stopListening()");
-                isListening = false;
-            }
+            if (speechRecognizer == null) { isListening = false; return; }
+            try { speechRecognizer.stopListening(); } catch (Exception e) { Log.e(TAG, "stopListening() error", e); }
+            finally { logState("stopListening()"); isListening = false; }
         });
     }
 
-    // ================================
-    // beep + timed listening
-    // ================================
     private void startBeepThenTimedListening(long durationMs) {
         if (!isActivityVisible) return;
 
@@ -272,11 +344,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         beepPlayer = MediaPlayer.create(this, R.raw.beep);
-
-        if (beepPlayer == null) {
-            startTimedListening(durationMs);
-            return;
-        }
+        if (beepPlayer == null) { startTimedListening(durationMs); return; }
 
         beepPlayer.setOnCompletionListener(mp -> {
             try { mp.release(); } catch (Exception ignored) {}
@@ -296,7 +364,6 @@ public class MainActivity extends AppCompatActivity {
         if (!isActivityVisible) return;
 
         sttHandler.removeCallbacksAndMessages(null);
-
         startListening();
 
         sttHandler.postDelayed(() -> {
@@ -304,24 +371,14 @@ public class MainActivity extends AppCompatActivity {
         }, durationMs);
     }
 
-    // ================================
-    // RecognitionListener
-    // ================================
     private RecognitionListener buildRecognitionListener() {
         return new RecognitionListener() {
-            @Override
-            public void onReadyForSpeech(Bundle params) {
+            @Override public void onReadyForSpeech(Bundle params) {
                 tvNavigation.setText("🎙️ 듣는 중...");
                 logState("onReadyForSpeech");
             }
-
-            @Override
-            public void onBeginningOfSpeech() {
-                logState("onBeginningOfSpeech");
-            }
-
-            @Override
-            public void onRmsChanged(float rmsdB) {
+            @Override public void onBeginningOfSpeech() { logState("onBeginningOfSpeech"); }
+            @Override public void onRmsChanged(float rmsdB) {
                 if (rmsdB > RMS_LOG_THRESHOLD) {
                     long now = System.currentTimeMillis();
                     if (now - lastMicLogTimeMillis > RMS_LOG_INTERVAL_MS) {
@@ -330,65 +387,41 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
             }
-
             @Override public void onBufferReceived(byte[] buffer) {}
             @Override public void onEndOfSpeech() { logState("onEndOfSpeech"); }
-
-            @Override
-            public void onError(int error) {
+            @Override public void onError(int error) {
                 isListening = false;
                 tvNavigation.setText("음성 인식 오류, 다시 시도합니다.");
-
                 switch (error) {
-                    case SpeechRecognizer.ERROR_CLIENT:
-                        safeRestartListeningWithDelay(500);
-                        break;
+                    case SpeechRecognizer.ERROR_CLIENT: safeRestartListeningWithDelay(500); break;
                     case SpeechRecognizer.ERROR_NO_MATCH:
-                    case SpeechRecognizer.ERROR_SPEECH_TIMEOUT:
-                        safeRestartListeningWithDelay(400);
-                        break;
-                    default:
-                        safeRestartListeningWithDelay(800);
-                        break;
+                    case SpeechRecognizer.ERROR_SPEECH_TIMEOUT: safeRestartListeningWithDelay(400); break;
+                    default: safeRestartListeningWithDelay(800); break;
                 }
             }
-
-            @Override
-            public void onResults(Bundle results) {
+            @Override public void onResults(Bundle results) {
                 isListening = false;
-
                 ArrayList<String> list = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
                 if (list == null || list.isEmpty()) {
                     safeRestartListeningWithDelay(300);
                     return;
                 }
-
                 handleSTT(list.get(0));
             }
-
             @Override public void onPartialResults(Bundle partialResults) {}
             @Override public void onEvent(int eventType, Bundle params) {}
         };
     }
 
     // ================================
-    // STT 처리
+    // STT 처리 (기존 유지)
     // ================================
     private void handleSTT(String text) {
         text = text.trim();
         logState("handleSTT: " + text);
 
-        // STOP 명령
-        if (isStopCommand(text)) {
-            handleGlobalStop();
-            return;
-        }
-
-        // 내 위치 명령
-        if (isLocationCommand(text)) {
-            handleGlobalLocation();
-            return;
-        }
+        if (isStopCommand(text)) { handleGlobalStop(); return; }
+        if (isLocationCommand(text)) { handleGlobalLocation(); return; }
 
         switch (appState) {
             case MENU:
@@ -421,33 +454,24 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
-    // ================================
-    // 명령 인식
-    // ================================
     private boolean isGuideCommand(String text) {
         return text.matches(".*(길안내|길 안내|길찾기|네비|내비|네비게이션).*");
     }
-
     private boolean isStopCommand(String text) {
         return text.matches(".*(중지|그만|멈춰|끝내|종료|스톱).*");
     }
-
     private boolean isYes(String text) {
         return text.matches(".*(예|네|맞|그래).*");
     }
-
     private boolean isNo(String text) {
         return text.matches(".*(아니|틀려|노).*");
     }
-
     private boolean isLocationCommand(String text) {
         return text.matches("^(내 위치|현재 위치|여기 어디|내가 어디|어디야|위치).*$");
     }
 
-
     // ================================
-    // 목적지 후보 요청
+    // 서버 통신 (기존 유지)
     // ================================
     private void requestDestination(String query) {
         tvNavigation.setText("서버 요청중...");
@@ -495,24 +519,19 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-
-    // ================================
-    // 목적지 확인
-    // ================================
     private void evaluateConfirmation(String text) {
         confirmTryCount++;
         logState("evaluateConfirmation(" + text + ") try=" + confirmTryCount);
 
-        if (isYes(text)) {
-            confirmDestination();
-            return;
-        }
+        if (isYes(text)) { confirmDestination(); return; }
 
         if (isNo(text)) {
             if (confirmTryCount >= MAX_CONFIRM_TRY) {
                 appState = AppState.LISTENING_DESTINATION;
                 speakAndShow("다시 목적지를 말씀해주세요.");
-            } else speakAndShow("다른 장소인가요? 다시 말씀해주세요.");
+            } else {
+                speakAndShow("다른 장소인가요? 다시 말씀해주세요.");
+            }
             return;
         }
 
@@ -540,12 +559,7 @@ public class MainActivity extends AppCompatActivity {
         connectWebSocket();
     }
 
-
-    // ================================
-    // WebSocket 연결
-    // ================================
     private void connectWebSocket() {
-
         String wsUrl = BuildConfig.SERVER_URL
                 .replace("http://","ws://")
                 .replace("https://","wss://")
@@ -558,10 +572,6 @@ public class MainActivity extends AppCompatActivity {
         logState("WebSocket connecting → " + wsUrl);
     }
 
-
-    // ================================
-    // STOP 처리
-    // ================================
     private void handleGlobalStop() {
         stopListening();
         logState("handleGlobalStop()");
@@ -584,22 +594,13 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
-    // ================================
-    // 내 위치 피드백 요청
-    // ================================
     private void handleGlobalLocation() {
-        // 🔹 내 위치 시에는 안내만 잠시 멈추고, 경로안내 자체는 유지
         stopListening();
-
-        // 길안내 중이었는지 기록
         wasNavigatingBeforeLocation = (appState == AppState.NAVIGATING);
         isLocationSession = true;
         logState("handleGlobalLocation() 호출 | wasNavigating=" + wasNavigatingBeforeLocation);
 
-        // 길안내 중이라도 WebSocket은 유지, 단 타이머성 콜백은 잠시 정리
         navigationHandler.removeCallbacksAndMessages(null);
-
         speakAndShow("현재 위치 확인중입니다. 잠시만 기다려 주세요.");
         requestPhotoLocation();
     }
@@ -607,7 +608,7 @@ public class MainActivity extends AppCompatActivity {
     private void requestPhotoLocation() {
         tvNavigation.setText("현재 위치 분석중...");
         logState("requestPhotoLocation() start lat=" + currentLat + " lon=" + currentLon);
-        
+
         Call<PhotoLocationResponse> call = apiService.getPhotoLocation(
                 DEVICE_KEY,
                 currentLat,
@@ -633,9 +634,7 @@ public class MainActivity extends AppCompatActivity {
 
                 if (body.getStatus() == null || !"success".equalsIgnoreCase(body.getStatus())) {
                     if (wasNavigatingBeforeLocation) {
-                        // 길안내 중이었으면 경로 계속
                         speakAndShow("카메라 정보가 부족해 위치 확인이 어렵습니다. 경로 안내를 계속 진행해드릴게요.");
-                        // appState는 NAVIGATING 유지
                     } else {
                         speakAndShow("카메라 정보가 부족해 위치 확인이 어렵습니다.");
                         appState = AppState.MENU;
@@ -647,14 +646,9 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 StringBuilder sb = new StringBuilder();
-
                 if (body.getMatchedName() != null) {
-                    sb.append("현재 위치는 ")
-                            .append(body.getMatchedName())
-                            .append(" 근처입니다.");
-
-                    if (body.getAddress() != null)
-                        sb.append(" 주소는 ").append(body.getAddress()).append(" 입니다.");
+                    sb.append("현재 위치는 ").append(body.getMatchedName()).append(" 근처입니다.");
+                    if (body.getAddress() != null) sb.append(" 주소는 ").append(body.getAddress()).append(" 입니다.");
                 } else {
                     sb.append("주변 상호를 찾지 못했습니다.");
                 }
@@ -666,10 +660,8 @@ public class MainActivity extends AppCompatActivity {
                     else sb.append(" 정면 방향이 비교적 열려 있습니다.");
                 }
 
-                // 🔹 내 위치 이후에도 길안내를 계속해야 하는 경우
                 if (wasNavigatingBeforeLocation) {
                     sb.append(" 경로 안내를 계속 진행해드릴게요.");
-                    // 상태는 계속 NAVIGATING 유지
                     appState = AppState.NAVIGATING;
                     logState("STATE 유지 NAVIGATING (위치 안내 후)");
                 } else {
@@ -678,7 +670,6 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 speakAndShow(sb.toString());
-
                 isLocationSession = false;
                 wasNavigatingBeforeLocation = false;
                 logState("requestPhotoLocation() 완료");
@@ -694,7 +685,6 @@ public class MainActivity extends AppCompatActivity {
 
     private void handlePhotoLocationNetworkError(Throwable t) {
         if (wasNavigatingBeforeLocation) {
-            // 🔹 길안내 중이었으면 경로는 그대로 유지
             speakAndShow("서버 문제로 위치 확인에 실패했습니다. 경로 안내를 계속 진행해드릴게요.");
             appState = AppState.NAVIGATING;
         } else {
@@ -708,10 +698,6 @@ public class MainActivity extends AppCompatActivity {
         logState("handlePhotoLocationNetworkError() 완료");
     }
 
-
-    // ================================
-    // 내부 종료
-    // ================================
     private void stopNavigationInternal(String reason) {
         if (mWebSocket != null) {
             try { mWebSocket.close(1000, reason); } catch (Exception ignored) {}
@@ -722,13 +708,8 @@ public class MainActivity extends AppCompatActivity {
         logState("stopNavigationInternal(): " + reason);
     }
 
-
-    // ================================
-    // 화면 표시 + TTS
-    // ================================
     public void speakAndShow(String text) {
         runOnUiThread(() -> tvNavigation.setText(text));
-
         if (!text.equals(lastSpokenMessage) && mTTS != null) {
             stopListening();
             logState("speakAndShow(): " + text);
@@ -738,14 +719,12 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
-    // ================================
-    // Activity Lifecycle
-    // ================================
     @Override
     protected void onResume() {
         super.onResume();
         isActivityVisible = true;
+        // 포그라운드 복귀 시 위치 업데이트 재개
+        startLocationTracking(); // 3초 주기 요청 재개 [web:114]
     }
 
     @Override
@@ -754,31 +733,25 @@ public class MainActivity extends AppCompatActivity {
         isActivityVisible = false;
         sttHandler.removeCallbacksAndMessages(null);
         stopListening();
+        // 백그라운드 전환 시 배터리 절약을 위해 위치 업데이트 중단
+        stopLocationUpdatesSafely(); // [web:114]
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-
-        if (mWebSocket != null) {
-            try { mWebSocket.close(1000, null); } catch (Exception ignored) {}
-        }
-
-        if (speechRecognizer != null) {
-            try { speechRecognizer.destroy(); } catch (Exception ignored) {}
-        }
-
-        if (mTTS != null) {
-            mTTS.stop();
-            mTTS.shutdown();
-        }
-
-        if (beepPlayer != null) {
-            try { beepPlayer.stop(); } catch (Exception ignored) {}
-            beepPlayer.release();
-        }
-
+        if (mWebSocket != null) { try { mWebSocket.close(1000, null); } catch (Exception ignored) {} }
+        if (speechRecognizer != null) { try { speechRecognizer.destroy(); } catch (Exception ignored) {} }
+        if (mTTS != null) { mTTS.stop(); mTTS.shutdown(); }
+        if (beepPlayer != null) { try { beepPlayer.stop(); } catch (Exception ignored) {} beepPlayer.release(); }
         sttHandler.removeCallbacksAndMessages(null);
         navigationHandler.removeCallbacksAndMessages(null);
+        stopLocationUpdatesSafely(); // [web:114]
+    }
+
+    private void stopLocationUpdatesSafely() {
+        if (fused != null && locationCallback != null) {
+            try { fused.removeLocationUpdates(locationCallback); } catch (Exception ignored) {}
+        }
     }
 }
