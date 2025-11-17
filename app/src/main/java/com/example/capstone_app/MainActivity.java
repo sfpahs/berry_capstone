@@ -149,6 +149,10 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void logState(String message) {
+        Log.d(TAG, "[STATE] " + appState.name() + " | " + message);
+    }
+
     private void initializeTTS() {
         mTTS = new TextToSpeech(this, result -> {
             if (result == TextToSpeech.SUCCESS) {
@@ -212,6 +216,7 @@ public class MainActivity extends AppCompatActivity {
             if (speechRecognizer == null || isListening) return;
 
             isListening = true;
+            logState("startListening()");
             android.content.Intent intent =
                     new android.content.Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ko-KR");
@@ -243,6 +248,7 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception e) {
                 Log.e(TAG, "stopListening() error", e);
             } finally {
+                logState("stopListening()");
                 isListening = false;
             }
         });
@@ -348,6 +354,7 @@ public class MainActivity extends AppCompatActivity {
     // ================================
     private void handleSTT(String text) {
         text = text.trim();
+        logState("handleSTT: " + text);
 
         // STOP 명령
         if (isStopCommand(text)) {
@@ -365,6 +372,7 @@ public class MainActivity extends AppCompatActivity {
             case MENU:
                 if (isGuideCommand(text)) {
                     appState = AppState.LISTENING_DESTINATION;
+                    logState("STATE → LISTENING_DESTINATION");
                     speakAndShow("어디로 안내해드릴까요?");
                 }
                 break;
@@ -417,6 +425,7 @@ public class MainActivity extends AppCompatActivity {
     // ================================
     private void requestDestination(String query) {
         tvNavigation.setText("서버 요청중...");
+        logState("requestDestination(): " + query);
 
         Call<DestinationResponse> call = apiService.tuneDestination(
                 okhttp3.RequestBody.create(null, query),
@@ -428,6 +437,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onResponse(Call<DestinationResponse> call, Response<DestinationResponse> res) {
                 if (!res.isSuccessful() || res.body() == null || res.body().getTuned() == null) {
+                    logState("requestDestination() → 후보 없음 / 응답 오류");
                     tvNavigation.setText("후보 없음, 다시 말씀해주세요.");
                     appState = AppState.LISTENING_DESTINATION;
                     safeRestartListeningWithDelay(300);
@@ -439,6 +449,7 @@ public class MainActivity extends AppCompatActivity {
                 tempDestLon = res.body().getTuned().getLon();
 
                 appState = AppState.CONFIRMING_DESTINATION;
+                logState("STATE → CONFIRMING_DESTINATION 후보=" + tempDestinationName);
                 confirmTryCount = 0;
 
                 speakAndShow(tempDestinationName + " 맞습니까? 예 또는 아니오로 답해주세요.");
@@ -448,6 +459,7 @@ public class MainActivity extends AppCompatActivity {
             public void onFailure(Call<DestinationResponse> call, Throwable t) {
                 Log.e(TAG, "tuneDestination 실패", t);
                 tvNavigation.setText("서버 연결 실패");
+                logState("requestDestination() 실패: " + t.getMessage());
                 safeRestartListeningWithDelay(500);
             }
         });
@@ -459,6 +471,7 @@ public class MainActivity extends AppCompatActivity {
     // ================================
     private void evaluateConfirmation(String text) {
         confirmTryCount++;
+        logState("evaluateConfirmation(" + text + ") try=" + confirmTryCount);
 
         if (isYes(text)) {
             confirmDestination();
@@ -491,6 +504,7 @@ public class MainActivity extends AppCompatActivity {
                 "목적지 : %.6f, %.6f", currentDestLat, currentDestLon));
 
         appState = AppState.NAVIGATING;
+        logState("STATE → NAVIGATING 확정 목적지=" + currentDestinationName);
 
         speakAndShow(currentDestinationName + "으로 이동을 시작합니다.");
         connectWebSocket();
@@ -511,6 +525,7 @@ public class MainActivity extends AppCompatActivity {
         mWebSocket = mClient.newWebSocket(request, new NavigationWebSocketListener(this));
 
         Log.d(TAG, "🚀 WS 연결 시도 → " + wsUrl);
+        logState("WebSocket connecting → " + wsUrl);
     }
 
 
@@ -519,6 +534,7 @@ public class MainActivity extends AppCompatActivity {
     // ================================
     private void handleGlobalStop() {
         stopListening();
+        logState("handleGlobalStop()");
 
         if (mTTS != null) {
             try { mTTS.stop(); } catch (Exception ignored) {}
@@ -533,6 +549,7 @@ public class MainActivity extends AppCompatActivity {
         } else {
             navigationHandler.removeCallbacksAndMessages(null);
             appState = AppState.MENU;
+            logState("STATE → MENU (global stop)");
             speakAndShow("모든 안내 종료. 다시 시작하려면 '길안내'라고 말씀해주세요.");
         }
     }
@@ -548,6 +565,7 @@ public class MainActivity extends AppCompatActivity {
         // 길안내 중이었는지 기록
         wasNavigatingBeforeLocation = (appState == AppState.NAVIGATING);
         isLocationSession = true;
+        logState("handleGlobalLocation() 호출 | wasNavigating=" + wasNavigatingBeforeLocation);
 
         // 길안내 중이라도 WebSocket은 유지, 단 타이머성 콜백은 잠시 정리
         navigationHandler.removeCallbacksAndMessages(null);
@@ -558,6 +576,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void requestPhotoLocation() {
         tvNavigation.setText("현재 위치 분석중...");
+        logState("requestPhotoLocation() start lat=" + currentLat + " lon=" + currentLon);
 
         Call<PhotoLocationResponse> call = apiService.getPhotoLocation(
                 DEVICE_KEY,
@@ -569,6 +588,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onResponse(Call<PhotoLocationResponse> call, Response<PhotoLocationResponse> response) {
                 if (!response.isSuccessful() || response.body() == null) {
+                    logState("requestPhotoLocation() → 응답 없음");
                     handlePhotoLocationNetworkError(null);
                     return;
                 }
@@ -582,6 +602,7 @@ public class MainActivity extends AppCompatActivity {
                     } else {
                         speakAndShow("카메라 정보가 부족해 위치 확인이 어렵습니다.");
                         appState = AppState.MENU;
+                        logState("STATE → MENU (위치 분석 실패)");
                     }
                     isLocationSession = false;
                     wasNavigatingBeforeLocation = false;
@@ -613,18 +634,22 @@ public class MainActivity extends AppCompatActivity {
                     sb.append(" 경로 안내를 계속 진행해드릴게요.");
                     // 상태는 계속 NAVIGATING 유지
                     appState = AppState.NAVIGATING;
+                    logState("STATE 유지 NAVIGATING (위치 안내 후)");
                 } else {
                     appState = AppState.MENU;
+                    logState("STATE → MENU (위치 안내 종료)");
                 }
 
                 speakAndShow(sb.toString());
 
                 isLocationSession = false;
                 wasNavigatingBeforeLocation = false;
+                logState("requestPhotoLocation() 완료");
             }
 
             @Override
             public void onFailure(Call<PhotoLocationResponse> call, Throwable t) {
+                logState("requestPhotoLocation() 실패: " + t.getMessage());
                 handlePhotoLocationNetworkError(t);
             }
         });
@@ -638,10 +663,12 @@ public class MainActivity extends AppCompatActivity {
         } else {
             speakAndShow("서버 문제로 위치 확인 실패. 잠시 후 다시 시도해주세요.");
             appState = AppState.MENU;
+            logState("STATE → MENU (위치 서버 오류)");
         }
 
         isLocationSession = false;
         wasNavigatingBeforeLocation = false;
+        logState("handlePhotoLocationNetworkError() 완료");
     }
 
 
@@ -655,6 +682,7 @@ public class MainActivity extends AppCompatActivity {
         }
         navigationHandler.removeCallbacksAndMessages(null);
         appState = AppState.MENU;
+        logState("stopNavigationInternal(): " + reason);
     }
 
 
@@ -666,6 +694,7 @@ public class MainActivity extends AppCompatActivity {
 
         if (!text.equals(lastSpokenMessage) && mTTS != null) {
             stopListening();
+            logState("speakAndShow(): " + text);
             lastSpokenMessage = text;
             lastTtsTimeMillis = System.currentTimeMillis();
             mTTS.speak(text, TextToSpeech.QUEUE_FLUSH, null, "TTS_" + lastTtsTimeMillis);

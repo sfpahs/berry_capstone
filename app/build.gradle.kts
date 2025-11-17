@@ -4,7 +4,10 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
-val localProperties = gradleLocalProperties(rootDir)
+val localProperties = gradleLocalProperties(
+    rootDir,
+    providers = TODO()
+)
 val devServerUrl = localProperties.getProperty("DEV_SERVER_URL") ?: "https://example.dev/"
 val prodServerUrl = localProperties.getProperty("PROD_SERVER_URL") ?: "https://example.com/"
 

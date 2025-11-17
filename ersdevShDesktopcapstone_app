@@ -1,0 +1,157 @@
+warning: in the working copy of 'app/build.gradle.kts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/src/main/java/com/example/capstone_app/MainActivity.java', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/.idea/gradle.xml b/.idea/gradle.xml[m
+[1mindex 1b65c7a..639c779 100644[m
+[1m--- a/.idea/gradle.xml[m
+[1m+++ b/.idea/gradle.xml[m
+[36m@@ -13,4 +13,7 @@[m
+             <option value="$PROJECT_DIR$/app" />[m
+           </set>[m
+         </option>[m
+[31m-    [m
+\ No newline at end of file[m
+[32m+[m[32m      </GradleProjectSettings>[m
+[32m+[m[32m    </option>[m
+[32m+[m[32m  </component>[m
+[32m+[m[32m</project>[m
+\ No newline at end of file[m
+[1mdiff --git a/app/build.gradle.kts b/app/build.gradle.kts[m
+[1mindex cef5d22..cd5d3bf 100644[m
+[1m--- a/app/build.gradle.kts[m
+[1m+++ b/app/build.gradle.kts[m
+[36m@@ -4,7 +4,10 @@[m [mplugins {[m
+     alias(libs.plugins.android.application)[m
+ }[m
+ [m
+[31m-val localProperties = gradleLocalProperties(rootDir)[m
+[32m+[m[32mval localProperties = gradleLocalProperties([m
+[32m+[m[32m    rootDir,[m
+[32m+[m[32m    providers = TODO()[m
+[32m+[m[32m)[m
+ val devServerUrl = localProperties.getProperty("DEV_SERVER_URL") ?: "https://example.dev/"[m
+ val prodServerUrl = localProperties.getProperty("PROD_SERVER_URL") ?: "https://example.com/"[m
+ [m
+[1mdiff --git a/app/src/main/java/com/example/capstone_app/MainActivity.java b/app/src/main/java/com/example/capstone_app/MainActivity.java[m
+[1mindex 42dbf17..18c7894 100644[m
+[1m--- a/app/src/main/java/com/example/capstone_app/MainActivity.java[m
+[1m+++ b/app/src/main/java/com/example/capstone_app/MainActivity.java[m
+[36m@@ -149,6 +149,10 @@[m [mpublic class MainActivity extends AppCompatActivity {[m
+         }[m
+     }[m
+ [m
+[32m+[m[32m    private void logState(String message) {[m
+[32m+[m[32m        Log.d(TAG, "[STATE] " + appState.name() + " | " + message);[m
+[32m+[m[32m    }[m
+[32m+[m
+     private void initializeTTS() {[m
+         mTTS = new TextToSpeech(this, result -> {[m
+             if (result == TextToSpeech.SUCCESS) {[m
+[36m@@ -212,6 +216,7 @@[m [mpublic class MainActivity extends AppCompatActivity {[m
+             if (speechRecognizer == null || isListening) return;[m
+ [m
+             isListening = true;[m
+[32m+[m[32m            logState("startListening()");[m
+             android.content.Intent intent =[m
+                     new android.content.Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);[m
+             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ko-KR");[m
+[36m@@ -243,6 +248,7 @@[m [mpublic class MainActivity extends AppCompatActivity {[m
+             } catch (Exception e) {[m
+                 Log.e(TAG, "stopListening() error", e);[m
+             } finally {[m
+[32m+[m[32m                logState("stopListening()");[m
+                 isListening = false;[m
+             }[m
+         });[m
+[36m@@ -348,6 +354,7 @@[m [mpublic class MainActivity extends AppCompatActivity {[m
+     // ================================[m
+     private void handleSTT(String text) {[m
+         text = text.trim();[m
+[32m+[m[32m        logState("handleSTT: " + text);[m
+ [m
+         // STOP 명령[m
+         if (isStopCommand(text)) {[m
+[36m@@ -365,6 +372,7 @@[m [mpublic class MainActivity extends AppCompatActivity {[m
+             case MENU:[m
+                 if (isGuideCommand(text)) {[m
+                     appState = AppState.LISTENING_DESTINATION;[m
+[32m+[m[32m                    logState("STATE → LISTENING_DESTINATION");[m
+                     speakAndShow("어디로 안내해드릴까요?");[m
+                 }[m
+                 break;[m
+[36m@@ -417,6 +425,7 @@[m [mpublic class MainActivity extends AppCompatActivity {[m
+     // ================================[m
+     private void requestDestination(String query) {[m
+         tvNavigation.setText("서버 요청중...");[m
+[32m+[m[32m        logState("requestDestination(): " + query);[m
+ [m
+         Call<DestinationResponse> call = apiService.tuneDestination([m
+                 okhttp3.RequestBody.create(null, query),[m
+[36m@@ -428,6 +437,7 @@[m [mpublic class MainActivity extends AppCompatActivity {[m
+             @Override[m
+             public void onResponse(Call<DestinationResponse> call, Response<DestinationResponse> res) {[m
+                 if (!res.isSuccessful() || res.body() == null || res.body().getTuned() == null) {[m
+[32m+[m[32m                    logState("requestDestination() → 후보 없음 / 응답 오류");[m
+                     tvNavigation.setText("후보 없음, 다시 말씀해주세요.");[m
+                     appState = AppState.LISTENING_DESTINATION;[m
+                     safeRestartListeningWithDelay(300);[m
+[36m@@ -439,6 +449,7 @@[m [mpublic class MainActivity extends AppCompatActivity {[m
+                 tempDestLon = res.body().getTuned().getLon();[m
+ [m
+                 appState = AppState.CONFIRMING_DESTINATION;[m
+[32m+[m[32m                logState("STATE → CONFIRMING_DESTINATION 후보=" + tempDestinationName);[m
+                 confirmTryCount = 0;[m
+ [m
+                 speakAndShow(tempDestinationName + " 맞습니까? 예 또는 아니오로 답해주세요.");[m
+[36m@@ -448,6 +459,7 @@[m [mpublic class MainActivity extends AppCompatActivity {[m
+             public void onFailure(Call<DestinationResponse> call, Throwable t) {[m
+                 Log.e(TAG, "tuneDestination 실패", t);[m
+                 tvNavigation.setText("서버 연결 실패");[m
+[32m+[m[32m                logState("requestDestination() 실패: " + t.getMessage());[m
+                 safeRestartListeningWithDelay(500);[m
+             }[m
+         });[m
+[36m@@ -459,6 +471,7 @@[m [mpublic class MainActivity extends AppCompatActivity {[m
+     // ================================[m
+     private void evaluateConfirmation(String text) {[m
+         confirmTryCount++;[m
+[32m+[m[32m        logState("evaluateConfirmation(" + text + ") try=" + confirmTryCount);[m
+ [m
+         if (isYes(text)) {[m
+             confirmDestination();[m
+[36m@@ -491,6 +504,7 @@[m [mpublic class MainActivity extends AppCompatActivity {[m
+                 "목적지 : %.6f, %.6f", currentDestLat, currentDestLon));[m
+ [m
+         appState = AppState.NAVIGATING;[m
+[32m+[m[32m        logState("STATE → NAVIGATING 확정 목적지=" + currentDestinationName);[m
+ [m
+         speakAndShow(currentDestinationName + "으로 이동을 시작합니다.");[m
+         connectWebSocket();[m
+[36m@@ -511,6 +525,7 @@[m [mpublic class MainActivity extends AppCompatActivity {[m
+         mWebSocket = mClient.newWebSocket(request, new NavigationWebSocketListener(this));[m
+ [m
+         Log.d(TAG, "🚀 WS 연결 시도 → " + wsUrl);[m
+[32m+[m[32m        logState("WebSocket connecting → " + wsUrl);[m
+     }[m
+ [m
+ [m
+[36m@@ -519,6 +534,7 @@[m [mpublic class MainActivity extends AppCompatActivity {[m
+     // ================================[m
+     private void handleGlobalStop() {[m
+         stopListening();[m
+[32m+[m[32m        logState("handleGlobalStop()");[m
+ [m
+         if (mTTS != null) {[m
+             try { mTTS.stop(); } catch (Exception ignored) {}[m
+[36m@@ -533,6 +549,7 @@[m [mpublic class MainActivity extends AppCompatActivity {[m
+         } else {[m
+             navigationHandler.removeCallbacksAndMessages(null);[m
+             appState = AppState.MENU;[m
+[32m+[m[32m            logState("STATE → MENU (global stop)");[m
+             speakAndShow("모든 안내 종료. 다시 시작하려면 '길안내'라고 말씀해주세요.");[m
+         }[m
+     }[m
+[36m@@ -548,6 +565,7 @@[m [mpublic class MainActivity extends AppCompatActivity {[m
+         // 길안내 중이었는지 기록[m
+         wasNavigatingBeforeLocation = (appState == AppState.NAVIGATING);[m
+         isLocationSession = true;[m
+[32m+[m[32m        logState("handleGlobalLocation() 호출 | wasNavigating=" + wasNav
