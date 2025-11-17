@@ -607,13 +607,13 @@ public class MainActivity extends AppCompatActivity {
     private void requestPhotoLocation() {
         tvNavigation.setText("현재 위치 분석중...");
         logState("requestPhotoLocation() start lat=" + currentLat + " lon=" + currentLon);
-
+        
         Call<PhotoLocationResponse> call = apiService.getPhotoLocation(
                 DEVICE_KEY,
                 currentLat,
                 currentLon
         );
-
+        Log.d(TAG, "requestPhotoLocation: " + call.request().url().toString());
         call.enqueue(new Callback<PhotoLocationResponse>() {
             @Override
             public void onResponse(Call<PhotoLocationResponse> call, Response<PhotoLocationResponse> response) {
